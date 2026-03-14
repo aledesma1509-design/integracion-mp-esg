@@ -1,0 +1,20 @@
+{
+  "name": "integracion-mp-esg",
+  "version": "1.0.0",
+  "description": "Backend para integración MercadoPago Checkout Pro - Experiencia Sin Gluten",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "mercadopago": "^2.0.0"
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
