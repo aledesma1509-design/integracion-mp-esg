@@ -151,6 +151,20 @@
             gap: 12px;
         }
 
+        .phone-row {
+            display: grid;
+            grid-template-columns: 80px 80px 1fr;
+            gap: 8px;
+        }
+
+        .phone-row input {
+            text-align: center;
+        }
+
+        .phone-row input:last-child {
+            text-align: left;
+        }
+
         button {
             width: 100%;
             background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
@@ -286,8 +300,13 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="phone">Teléfono (con código de área)</label>
-                    <input type="tel" id="phone" name="phone" placeholder="Ej: 1155667788">
+                    <label>Teléfono</label>
+                    <div class="phone-row">
+                        <input type="tel" id="country_code" placeholder="+54" value="+54" maxlength="4">
+                        <input type="tel" id="area_code" placeholder="Área" maxlength="5">
+                        <input type="tel" id="phone_number" placeholder="Número (sin 15)">
+                    </div>
+                    <input type="hidden" id="phone" name="phone">
                 </div>
 
                 <button type="submit" id="submitBtn">
@@ -357,6 +376,14 @@
             btn.disabled = true;
             spinner.style.display = 'block';
             btnText.innerText = 'Procesando...';
+
+            // Combinar teléfono en formato estándar
+            const cc = document.getElementById('country_code').value.trim();
+            const ac = document.getElementById('area_code').value.trim();
+            const pn = document.getElementById('phone_number').value.trim();
+            if (cc && ac && pn) {
+                document.getElementById('phone').value = cc + '-' + ac + '-' + pn;
+            }
 
             const formData = new FormData(e.target);
             const data = Object.fromEntries(formData.entries());
