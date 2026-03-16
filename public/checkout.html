@@ -382,7 +382,9 @@
             const ac = document.getElementById('area_code').value.trim();
             const pn = document.getElementById('phone_number').value.trim();
             if (cc && ac && pn) {
-                document.getElementById('phone').value = cc + '-' + ac + '-' + pn;
+                // Para Argentina (+54), los celulares llevan 9 antes del código de área
+                const prefix = (cc === '+54') ? cc + '-9-' : cc + '-';
+                document.getElementById('phone').value = prefix + ac + '-' + pn;
             }
 
             const formData = new FormData(e.target);
