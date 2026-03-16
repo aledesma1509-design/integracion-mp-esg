@@ -40,9 +40,10 @@ export default async function handler(req, res) {
 
         // Guardar TODOS los datos en external_reference
         // Así el webhook puede usar los datos ingresados acá para el email y el Google Sheet
+        const decodedTitle = decodeURIComponent(event_title);
         const externalReference = JSON.stringify({
             event_id,
-            event_title,
+            event_title: decodedTitle,
             buyer_name: name,
             buyer_lastname: lastname || '',
             buyer_email: email,
@@ -55,7 +56,7 @@ export default async function handler(req, res) {
                 items: [
                     {
                         id: event_id,
-                        title: event_title,
+                        title: decodedTitle,
                         quantity: 1,
                         unit_price: priceNum,
                         currency_id: 'ARS'
