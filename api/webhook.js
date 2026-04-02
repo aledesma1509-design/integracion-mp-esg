@@ -1,6 +1,6 @@
 // api/webhook.js
 // Recibe notificaciones de MercadoPago, valida el pago,
-// guarda en Google Sheet y envía email con datos del comprador
+// guarda en Google Sheet y agrega suscriptor en Acumbamail
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -54,14 +54,13 @@ export default async function handler(req, res) {
     // Procesar según el estado del pago
     if (payment.status === 'approved') {
       await saveToGoogleSheet(payment, 'approved');
-      await sendNotificationEmail(payment, 'approved');
+      await addToAcumbamail(payment);
       return res.status(200).json({ status: 'procesado', payment_status: 'approved' });
     }
 
     if (payment.status === 'pending' || payment.status === 'in_process') {
       console.log(`Pago ${paymentId} pendiente. Se procesará cuando se acredite.`);
       await saveToGoogleSheet(payment, 'pending');
-      await sendNotificationEmail(payment, 'pending');
       return res.status(200).json({ status: 'pendiente', payment_status: payment.status });
     }
 
@@ -98,16 +97,16 @@ async function saveToGoogleSheet(payment, status) {
   }
 
   const payer = payment.payer || {};
-  const buyerFirstName = refData.buyer_name || payer.first_name || '';
-  const buyerLastName = refData.buyer_lastname || payer.last_name || '';
-  const buyerName = [buyerFirstName, buyerLastName].filter(Boolean).join(' ') || 'No disponible';
+  const buyerFirstName = refData.buyer_name || payer.first_name || 'No disponible';
+  const buyerLastName = refData.buyer_lastname || payer.last_name || 'No disponible';
   const buyerEmail = refData.buyer_email || payer.email || 'No disponible';
   const buyerPhone = refData.buyer_phone || payer.phone?.number || '';
 
   const rowData = {
     fecha: new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
     estado: status,
-    nombre: buyerName,
+    nombre: buyerFirstName,
+    apellido: buyerLastName,
     email: buyerEmail,
     telefono: buyerPhone,
     monto: payment.transaction_amount,
@@ -127,7 +126,7 @@ async function saveToGoogleSheet(payment, status) {
       const errorText = await response.text();
       console.error(`Error guardando en Google Sheet: ${response.status} - ${errorText}`);
     } else {
-      console.log(`📊 Registro guardado en Google Sheet: ${buyerName} - ${status}`);
+      console.log(`📊 Registro guardado en Google Sheet: ${buyerFirstName} ${buyerLastName} - ${status}`);
     }
   } catch (error) {
     console.error('Error al enviar datos al Google Sheet:', error.message);
@@ -136,139 +135,70 @@ async function saveToGoogleSheet(payment, status) {
 }
 
 /**
- * Envía email de notificación con los datos de la compra.
+ * Agrega al comprador como suscriptor en la lista de Acumbamail.
+ * Se separa el nombre completo en "Primer nombre" y "Segundo nombre"
+ * para poder personalizar emails (ej: "Hola Marcela...").
  */
-async function sendNotificationEmail(payment, status) {
-  let refData = {};
-  let eventId = 'N/A';
-  let eventTitle = 'N/A';
+async function addToAcumbamail(payment) {
+  const authToken = process.env.ACUMBAMAIL_AUTH_TOKEN;
+  const listId = process.env.ACUMBAMAIL_LIST_ID;
 
+  if (!authToken || !listId) {
+    console.warn('ACUMBAMAIL_AUTH_TOKEN o ACUMBAMAIL_LIST_ID no configuradas, saltando Acumbamail');
+    return;
+  }
+
+  // Extraer datos del comprador
+  let refData = {};
   try {
     refData = JSON.parse(payment.external_reference);
-    eventId = refData.event_id || 'N/A';
-    eventTitle = refData.event_title || 'N/A';
   } catch {
-    eventId = payment.external_reference || 'N/A';
-    eventTitle = payment.additional_info?.items?.[0]?.title || 'N/A';
+    refData = {};
   }
 
   const payer = payment.payer || {};
-  const buyerFirstName = refData.buyer_name || payer.first_name || '';
-  const buyerLastName = refData.buyer_lastname || payer.last_name || '';
-  const buyerName = [buyerFirstName, buyerLastName].filter(Boolean).join(' ') || 'No disponible';
-  const buyerEmail = refData.buyer_email || payer.email || 'No disponible';
-  const buyerPhone = refData.buyer_phone || payer.phone?.number || '';
-  const buyerDNI = payer.identification?.number || '';
+  const fullName = refData.buyer_name || payer.first_name || '';
+  const lastName = refData.buyer_lastname || payer.last_name || '';
+  const email = refData.buyer_email || payer.email || '';
+  const phone = refData.buyer_phone || payer.phone?.number || '';
 
-  const recipientEmails = process.env.NOTIFICATION_EMAILS;
-  if (!recipientEmails) {
-    console.error('NOTIFICATION_EMAILS no configurada');
-    throw new Error('Emails de notificación no configurados');
+  if (!email) {
+    console.warn('No hay email del comprador, no se puede agregar a Acumbamail');
+    return;
   }
 
-  const isApproved = status === 'approved';
-  const statusLabel = isApproved ? '✅ PAGO APROBADO' : '⏳ PAGO PENDIENTE';
-  const statusColor = isApproved ? '#22c55e' : '#f59e0b';
+  // Separar primer nombre y segundo nombre
+  // Ej: "Marcela Liliana" → primer: "Marcela", segundo: "Liliana"
+  // Ej: "Juan" → primer: "Juan", segundo: ""
+  const nameParts = fullName.trim().split(/\s+/);
+  const firstName = nameParts[0] || '';
+  const secondName = nameParts.slice(1).join(' ') || '';
 
-  const subject = isApproved
-    ? `✅ Nueva entrada vendida: ${eventTitle} - ${buyerName}`
-    : `⏳ Pago pendiente: ${eventTitle} - ${buyerName}`;
+  // Construir parámetros como form-data (formato que usa la API de Acumbamail)
+  const params = new URLSearchParams();
+  params.append('auth_token', authToken);
+  params.append('list_id', listId);
+  params.append('merge_fields[email]', email);
+  params.append('merge_fields[Primer nombre]', firstName);
+  params.append('merge_fields[Segundo nombre]', secondName);
+  params.append('merge_fields[Apellido]', lastName);
+  params.append('merge_fields[Celular]', phone);
 
-  const htmlBody = `
-    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-      <div style="background: ${statusColor}; color: white; padding: 16px 24px; border-radius: 12px 12px 0 0;">
-        <h1 style="margin: 0; font-size: 20px;">🌾 ${statusLabel}</h1>
-      </div>
-      <div style="background: #f8fafc; padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px;">
-        <h2 style="margin-top: 0; color: #334155;">Datos del asistente</h2>
-        <p style="color: #64748b; font-size: 13px; margin-top: -10px;">(Ingresados antes del pago)</p>
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 8px 0; color: #64748b; width: 140px;"><strong>Nombre:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b;">${buyerName}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #64748b;"><strong>Email:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b;"><a href="mailto:${buyerEmail}">${buyerEmail}</a></td>
-          </tr>
-          ${buyerPhone ? `<tr>
-            <td style="padding: 8px 0; color: #64748b;"><strong>Teléfono:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b;">${buyerPhone}</td>
-          </tr>` : ''}
-        </table>
+  try {
+    const response = await fetch('https://acumbamail.com/api/1/addSubscriber/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString()
+    });
 
-        ${buyerDNI ? `
-        <h3 style="color: #64748b; font-size: 14px; margin-top: 16px;">Info adicional de MercadoPago</h3>
-        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-          <tr><td style="padding: 4px 0; color: #94a3b8; width: 140px;">DNI:</td><td style="padding: 4px 0; color: #64748b;">${buyerDNI}</td></tr>
-        </table>
-        ` : ''}
-
-        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;">
-
-        <h2 style="color: #334155;">Evento</h2>
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 8px 0; color: #64748b; width: 140px;"><strong>Evento:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b; font-weight: bold;">${eventTitle}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #64748b;"><strong>ID Evento:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b;">${eventId}</td>
-          </tr>
-        </table>
-
-        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 16px 0;">
-
-        <h2 style="color: #334155;">Datos del pago</h2>
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 8px 0; color: #64748b; width: 140px;"><strong>ID Pago MP:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b;">${payment.id}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #64748b;"><strong>Monto:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b; font-weight: bold;">$${payment.transaction_amount?.toLocaleString('es-AR')}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #64748b;"><strong>Medio de pago:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b;">${payment.payment_type_id || 'N/A'}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #64748b;"><strong>Estado:</strong></td>
-            <td style="padding: 8px 0; color: ${statusColor}; font-weight: bold;">${payment.status}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #64748b;"><strong>Fecha:</strong></td>
-            <td style="padding: 8px 0; color: #1e293b;">${payment.date_approved || payment.date_created || 'N/A'}</td>
-          </tr>
-        </table>
-
-        ${isApproved ? '<p style="margin-top: 20px; padding: 12px; background: #f0fdf4; border-radius: 8px; color: #166534;">🎟️ <strong>Entrada confirmada.</strong> El asistente ya puede presentarse el día del evento.</p>' : '<p style="margin-top: 20px; padding: 12px; background: #fffbeb; border-radius: 8px; color: #92400e;">⏳ El pago está pendiente de acreditación. Recibirás otro email cuando se confirme.</p>'}
-      </div>
-    </div>
-  `;
-
-  // Enviar email via Resend
-  const resendResponse = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      from: process.env.EMAIL_FROM || 'Experiencia Sin Gluten <onboarding@resend.dev>',
-      to: recipientEmails.split(',').map(e => e.trim()),
-      subject: subject,
-      html: htmlBody
-    })
-  });
-
-  if (!resendResponse.ok) {
-    const errorText = await resendResponse.text();
-    console.error(`Error enviando email: ${resendResponse.status} - ${errorText}`);
-    throw new Error(`Resend respondió con ${resendResponse.status}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Error agregando suscriptor a Acumbamail: ${response.status} - ${errorText}`);
+    } else {
+      console.log(`📧 Suscriptor agregado a Acumbamail: ${firstName} ${lastName} (${email})`);
+    }
+  } catch (error) {
+    console.error('Error al conectar con Acumbamail:', error.message);
+    // No lanzamos error para no bloquear el flujo del webhook
   }
-
-  console.log(`📧 Email enviado a ${recipientEmails} - ${subject}`);
 }
