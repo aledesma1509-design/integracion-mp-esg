@@ -178,11 +178,11 @@ async function addToAcumbamail(payment) {
   const params = new URLSearchParams();
   params.append('auth_token', authToken);
   params.append('list_id', listId);
-  params.append('merge_fields[email]', email);
-  params.append('merge_fields[primer nombre]', firstName);
-  params.append('merge_fields[segundo nombre]', secondName);
-  params.append('merge_fields[apellido]', lastName);
-  params.append('merge_fields[celular]', phone);
+  params.append('merge_fields[EMAIL]', email);
+  params.append('merge_fields[PRIMERNOMBRE]', firstName);
+  params.append('merge_fields[SEGUNDONOMBRE]', secondName);
+  params.append('merge_fields[APELLIDO]', lastName);
+  params.append('merge_fields[CELULAR]', phone);
 
   try {
     const response = await fetch('https://acumbamail.com/api/1/addSubscriber/', {
